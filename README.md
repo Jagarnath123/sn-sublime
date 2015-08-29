@@ -1,7 +1,10 @@
 sn-sublime
 ==========
 
-Sublime v2 Integration with ServiceNow
+Sublime Text v2 & v3 Integration with ServiceNow (Eureka & above)
+- JSONv2 Support
+- Enhanced conflict detection between Server and local copy
+- Enhanced messages to the end user on error
 
 
 Setting an instance
