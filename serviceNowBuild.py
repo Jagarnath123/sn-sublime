@@ -18,15 +18,31 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+Modifications by John Andersen (http://www.john-james-andersen.com)
+- Support for Sublime Text 3
+- Migrated to JSONv2 support instead of JSON plugin support
+- Enhanced conflict checking - when saving a file, we first check to 
+  make sure that the server version is not in conflict with the initial local
+  version
 '''
 
 import sublime
 import sublime_plugin
-import urllib2
+#import urllib.request as urllib2
+try:
+        # For Python 3.0 and later
+        import urllib.request as urllib2
+except ImportError:
+        # Fall back to Python 2's urllib2
+        import urllib2 as urllib2
 import re
 import base64
 import json
-
+import hashlib
+import sys
+import os
+import traceback
 
 class ServiceNowBuildListener(sublime_plugin.EventListener):
     def on_pre_save(self, view):
@@ -40,6 +56,8 @@ class ServiceNowBuildCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         # Get the body of the file
         reg = sublime.Region(0, self.view.size())
+        #print "View: "+self.view.substr(reg)
+        
         self.text = self.view.substr(reg)
 
         # Get the Base64 encoded Auth String
@@ -51,29 +69,80 @@ class ServiceNowBuildCommand(sublime_plugin.TextCommand):
         fieldname = get_fieldname(self.text)           
 
         try:
-            data = json.dumps({fieldname: self.text})            
-            url = self.url + "&sysparm_action=update&JSON"
-            url = url.replace("sys_id", "sysparm_query=sys_id")
-            result = http_call(authentication, url, data)
-
-            #Check if success. If error, try with JSONv2 URL
-            if "\"__status\":\"success\"" not in result:
-                url = self.url + "&sysparm_action=update&JSONv2"
-                url = url.replace("sys_id", "sysparm_query=sys_id")
-                result = http_call(authentication, url, data)
-
-            if "\"__status\":\"success\"" not in result:
-                print "SN-Sublime - File Upload Failed!!"
-                print "URL used: " + url    
-            else:
-                print "SN-Sublime - File Successully Uploaded"
-            return
-        except (urllib2.HTTPError) as (e):
+            return self.postByJsonV2(authentication)
+        except urllib2.HTTPError as e:
             err = 'SN-Sublime - HTTP Error: %s' % (str(e.code))
-        except (urllib2.URLError) as (e):
-            err = 'SN-Sublime - URL Error: %s' % (str(e))
-        print err
+        except ValueError as ve:
+            #try:
+            #    return self.postByJsonV2(authentication)
+            #except (urllib2.URLError) as (e):
+                #err = 'SN-Sublime - URL Error: %s' % (str(e))
+            err = 'SN-Sublime - Value Error: %s' % (str(e))
+        #except (urllib2.URLError) as (e):
+        #    #Try again in case instance is using Dublin or later with JSONv2. Url is different
+        #    try:
+        #        return self.postByJsonV2(authentication)
+        #    except (urllib2.URLError) as (e):
+        #        err = 'SN-Sublime - URL Error: %s' % (str(e))
+        except:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            err = "Unknown Error: "+str(sys.exc_info()[1])
+        sublime.error_message(err)
+        traceback.print_tb(exc_tb)
+        print (err)
 
+
+        return
+
+    def postByJson(self, authentication):
+        fieldname = get_fieldname(self.text) 
+        data = json.dumps({fieldname: self.text})          
+        url = self.url + "&sysparm_action=update&JSON"
+        url = url.replace("sys_id", "sysparm_query=sys_id")
+        result = http_call(authentication, url, data)
+        print ("SN-Sublime - File Successully Uploaded via JSON Plugin")
+        return
+
+    def postByJsonV2(self, authentication):
+        fieldname = get_fieldname(self.text)
+        settings = sublime.load_settings('SN.sublime-settings')
+        urlHash = str(hashlib.sha224(self.url.replace("\r","").encode('utf-8')).hexdigest())
+        localHash = settings.get(urlHash)
+        url = self.url
+        url = url.replace("sys_id", "sysparm_query=sys_id")
+        url = url + "&JSONv2"
+        
+        if not localHash:
+            print ("No previous local copy exists...saving our script to the server")
+        else:
+            print ("Previous local copy exists...checking to see if it conflicts with server version")
+            result = http_call_get(authentication, url)
+            resultObj = json.loads(result.decode('utf-8'))
+            serverData = resultObj['records'][0][str(fieldname)]
+            serverHash = str(hashlib.sha224(serverData.replace("\r","").encode('utf-8')).hexdigest())
+            newLocalHash = str(hashlib.sha224(self.text.replace("\r","").encode('utf-8')).hexdigest())
+
+            if serverHash != localHash and serverHash != newLocalHash:
+                print ("Hash Mismatch Local: "+localHash+" Server: "+serverHash + " NewLocalHash: " + newLocalHash)
+                sublime.error_message("ERROR: This file is out of sync with the instance.  This save action will not be committed.\n\nPlease reconcile the differences.")
+                return
+            else:
+                print ("Comparison to the server looks good.  No differences.")
+
+
+
+        newTextHash = str(hashlib.sha224(self.text.replace("\r","").encode('utf-8')).hexdigest())
+        fieldname = get_fieldname(self.text) 
+        data = json.dumps({fieldname: self.text})            
+        url = self.url + "&sysparm_action=update&JSONv2"
+        url = url.replace("sys_id", "sysparm_query=sys_id")
+        result = http_call(authentication, url, data)
+        print ("File Successully Uploaded to SN via JSONv2")
+
+        settings.set(urlHash, newTextHash)
+        settings = sublime.save_settings('SN.sublime-settings')
         return
         
 
@@ -89,34 +158,60 @@ class ServiceNowSync(sublime_plugin.TextCommand):
            return
 
         try:
-            url = self.url + "&sysparm_action=get&JSON"
+            url = self.url + "&sysparm_action=get&JSONv2"
             url = url.replace("sys_id", "sysparm_sys_id")
-            response_data = json.loads(http_call(authentication,url,{}))
-            serverText = response_data['records'][0]['script']
-
+            print ("Trying to sync with existing file: "+url)
+            fieldname = get_fieldname(self.text) 
+            response_data = json.loads(http_call(authentication,url,'').decode('utf-8'))
+            dataz = response_data['records'][0]
+            serverText = response_data['records'][0][fieldname].replace("\r","")
+            
             if self.text != serverText and sublime.ok_cancel_dialog("File has been updated on server. \nPress OK to Reload."):
                 self.view.erase(edit, reg)
-                self.view.begin_edit()
                 self.view.insert(edit,0,serverText)
-                self.view.end_edit(edit)
+            else:
+                print ("Comparison to the server looks good.  No differences.")
             return
-        except (urllib2.HTTPError) as (e):
+        except urllib2.HTTPError as e:
             err = 'SN-Sublime - HTTP Error %s' % (str(e.code))
-        except (urllib2.URLError) as (e):
+        except urllib2.URLError as e:
             err = 'SN-Sublime - URL Error %s' % (str(e.code))
-        print err
+        print (err)
         
 
 def http_call(authentication, url, data):
-    timeout = 5
+    print("http_call")
+    data =  data.encode('utf-8') 
+    timeout = 8
     request = urllib2.Request(url, data)
     request.add_header("Authorization", authentication)
     request.add_header("Content-type", "application/json")
     http_file = urllib2.urlopen(request, timeout=timeout)
+    statusCode = http_file.getcode()
+    #print "Status Code: "+str(http_file.getcode())
     result = http_file.read()
+    #print result
+    #json.loads(result)
+
 
     return result
 
+def http_call_get(authentication, url):
+    print("http_call_get")
+    timeout = 5
+    request = urllib2.Request(url)
+    request.add_header("Authorization", authentication)
+    request.add_header("Content-type", "application/json")
+    http_file = urllib2.urlopen(request, timeout=timeout)
+    statusCode = http_file.getcode()
+    #print "Status Code: "+str(http_file.getcode())
+    result = http_file.read()
+    #print "RESULT: " + result
+    #json.loads(result)
+
+
+    return result
+    
 
 def get_authentication(sublimeClass, edit):
     # Get the file URL from the comment in the file
@@ -133,7 +228,7 @@ def get_authentication(sublimeClass, edit):
     reg = sublime.Region(0, sublimeClass.view.size())
     text = sublimeClass.view.substr(reg)
 
-    authMatch = re.search(r"__authentication[\W=]*([a-zA-Z0-9:~`\!@#$%\^&*()_\-;,.]*)", text)
+    authMatch = re.search(r"__authentication[\W=]*([a-zA-Z0-9:~`\/\!@#$%\^&*()_\-;,.]*)", text)
 
     if authMatch and authMatch.groups()[0] != "STORED":
         user_pass = authMatch.groups()[0]
@@ -144,12 +239,12 @@ def get_authentication(sublimeClass, edit):
     if authentication:
         return "Basic " + authentication
     else:
-        print "SN-Sublime - Auth Error. No authentication header tag found"        
+        sublime.error_message("SN-Sublime - Auth Error. No authentication header tag found")   
         return False
 
 
 def store_authentication(sublimeClass, edit, authentication, instance):
-    base64string = base64.encodestring(authentication).replace('\n', '')
+    base64string = base64.b64encode(authentication.encode('utf-8')).decode('utf-8').replace('\n', '')
     reg = sublime.Region(0, sublimeClass.view.size())
     text = sublimeClass.view.substr(reg)
     sublimeClass.text = text.replace(authentication, "STORED")
@@ -174,7 +269,7 @@ def get_url(text):
     if url_match:
         return url_match.groups()[0]
     else:
-        print "SN-Sublime - Error. Not a ServiceNow File"
+        print ("SN-Sublime - Error. Not a ServiceNow File")
         return False
 
 
@@ -183,9 +278,11 @@ def get_instance(url):
     if instance_match:
         return instance_match.groups()[0]
     else:
-        print "SN-Sublime - Error. No instance info found"        
+        print ("SN-Sublime - Error. No instance info found")        
         return False
 
 
 def syncFileCallback():
     sublime.active_window().active_view().run_command('service_now_sync')
+
+
