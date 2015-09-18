@@ -49,7 +49,7 @@ class ServiceNowBuildListener(sublime_plugin.EventListener):
         view.run_command('service_now_build')
 
     def on_load(self,view):
-        sublime.set_timeout(syncFileCallback,10)
+        sublime.set_timeout(syncFileCallback,15)
         
 
 class ServiceNowBuildCommand(sublime_plugin.TextCommand):
@@ -121,13 +121,19 @@ class ServiceNowBuildCommand(sublime_plugin.TextCommand):
             result = http_call_get(authentication, url)
             resultObj = json.loads(result.decode('utf-8'))
             serverData = resultObj['records'][0][str(fieldname)]
+            #serverData = serverData.replace("\r","")
+            #print ("SERVER DATA\n\n:"+serverData)
             serverHash = str(hashlib.sha224(serverData.replace("\r","").encode('utf-8')).hexdigest())
             newLocalHash = str(hashlib.sha224(self.text.replace("\r","").encode('utf-8')).hexdigest())
 
             if serverHash != localHash and serverHash != newLocalHash:
                 print ("Hash Mismatch Local: "+localHash+" Server: "+serverHash + " NewLocalHash: " + newLocalHash)
-                sublime.error_message("ERROR: This file is out of sync with the instance.  This save action will not be committed.\n\nPlease reconcile the differences.")
-                return
+                #sublime.error_message("ERROR: This file is out of sync with the instance.  This save action will not be committed.\n\nPlease reconcile the differences.")
+                if sublime.ok_cancel_dialog("ERROR: This file is out of sync with the instance.\n\nPress OK to still push your version to the server.\nPress Cancel to stop the save so that you can resolve the issue.\n\nPlease Note: pressing OK will over-write the server copy"):
+                    print("Out of sync version will be pushed up to the server.  Server version will be over written.")
+                else:
+                    print("No save action will take place") 
+                    return
             else:
                 print ("Comparison to the server looks good.  No differences.")
 
@@ -182,7 +188,7 @@ class ServiceNowSync(sublime_plugin.TextCommand):
 def http_call(authentication, url, data):
     print("http_call")
     data =  data.encode('utf-8') 
-    timeout = 8
+    timeout = 15
     request = urllib2.Request(url, data)
     request.add_header("Authorization", authentication)
     request.add_header("Content-type", "application/json")
@@ -198,7 +204,7 @@ def http_call(authentication, url, data):
 
 def http_call_get(authentication, url):
     print("http_call_get")
-    timeout = 5
+    timeout = 15
     request = urllib2.Request(url)
     request.add_header("Authorization", authentication)
     request.add_header("Content-type", "application/json")
@@ -284,5 +290,4 @@ def get_instance(url):
 
 def syncFileCallback():
     sublime.active_window().active_view().run_command('service_now_sync')
-
 
