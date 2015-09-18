@@ -245,7 +245,7 @@ def get_authentication(sublimeClass, edit):
     if authentication:
         return "Basic " + authentication
     else:
-        sublime.error_message("SN-Sublime - Auth Error. No authentication header tag found")   
+        sublime.error_message("SN-Sublime - Auth Error. No authentication header tag found or incorrect URL / Credentials were provided")   
         return False
 
 
