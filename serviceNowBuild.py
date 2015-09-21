@@ -234,7 +234,7 @@ def get_authentication(sublimeClass, edit):
     reg = sublime.Region(0, sublimeClass.view.size())
     text = sublimeClass.view.substr(reg)
 
-    authMatch = re.search(r"__authentication[\W=]*([a-zA-Z0-9:~`\/\!@#$%\^&*()_\-;,.]*)", text)
+    authMatch = re.search(r”__authentication[\W=]*([a-zA-Z0-9:~`\/\!@#$%\^&*()_\-\\;,.]*)”, text)
 
     if authMatch and authMatch.groups()[0] != "STORED":
         user_pass = authMatch.groups()[0]
