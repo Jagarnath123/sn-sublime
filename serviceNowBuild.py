@@ -3,7 +3,7 @@ Copyright (c) 2013 Fruition Partners, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rightsau
+in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
@@ -193,14 +193,37 @@ def http_call(authentication, url, data):
     request.add_header("Authorization", authentication)
     request.add_header("Content-type", "application/json")
     http_file = urllib2.urlopen(request, timeout=timeout)
-    statusCode = http_file.getcode()
-    #print "Status Code: "+str(http_file.getcode())
+    #statusCode = http_file.getcode()
+    #print ("Status Code: "+str(http_file.getcode()))
     result = http_file.read()
-    #print result
-    #json.loads(result)
+    
+    valid, errMessage = valid_jsonv2_response(result)
+    if not valid:
+        sublime.error_message("ServiceNow Server Error: \n\n"+errMessage)   
+        return False
 
 
     return result
+
+def valid_jsonv2_response( result ):
+    #print (result.decode('utf-8'))
+    resOb = json.loads(result.decode('utf-8'))
+    valid = True;
+    errMessage = ""
+    #print (str(result['__error']))
+    #json.dumps(resOb.records[0].__error.message)
+    if "records" in resOb and len(resOb["records"]) > 0 and "__error" in resOb["records"][0] \
+        and "message" in resOb["records"][0]["__error"]:
+        print (resOb["records"][0]["__error"]["message"])
+        errMessage += resOb["records"][0]["__error"]["message"] + "\n"
+        valid = False
+    if "records" in resOb and len(resOb["records"]) > 0 and "__error" in resOb["records"][0] \
+        and "reason" in resOb["records"][0]["__error"]:
+        print (resOb["records"][0]["__error"]["reason"])
+        errMessage += "\n" + resOb["records"][0]["__error"]["reason"] + "\n"
+        valid = False
+
+    return (valid,errMessage)
 
 def http_call_get(authentication, url):
     print("http_call_get")
